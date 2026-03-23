@@ -1,0 +1,78 @@
+ame: Reusable Deploy
+
+on:
+  workflow_call:
+    inputs:
+      deploy_path:
+        required: true
+        type: string
+      image_name:
+        required: true
+        type: string
+      image_tag:
+        required: false
+        type: string
+        default: latest
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ inputs.image_name }}:${{ inputs.image_tag }}
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_DEPLOY_KEY }}
+
+      - name: Add VPS to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync project files to VPS
+        run: |
+          PROJECT_DIR="${{ inputs.deploy_path }}"
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "mkdir -p '$PROJECT_DIR'"
+
+          rsync -az \
+            --exclude ".git" \
+            --exclude ".github" \
+            ./docker-compose.yml \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$PROJECT_DIR/"
+
+      - name: Prepare env and deploy on VPS
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << EOF
+            set -euo pipefail
+
+            PROJECT_DIR="${{ inputs.deploy_path }}"
+
+            if [ ! -f "\$PROJECT_DIR/.env" ]; then
+              cp /home/deployer/env/global.env "\$PROJECT_DIR/.env"
+            fi
+
+            cd "\$PROJECT_DIR"
+            docker compose pull
+            docker compose up -d --remove-orphans
+          EOF
