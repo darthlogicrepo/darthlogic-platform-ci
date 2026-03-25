@@ -3,9 +3,6 @@ name: Reusable Deploy Workflow
 on:
   workflow_call:
     inputs:
-      deploy_path:
-        required: true
-        type: string
       image_name:
         required: true
         type: string
@@ -56,38 +53,47 @@ jobs:
 
       - name: Ensure project directory exists on VPS
         run: |
+          PROJECT_NAME="${{ github.event.repository.name }}"
+          PROJECT_DIR="/home/deployer/stacks/projects/${PROJECT_NAME}"
+
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            "mkdir -p '${{ inputs.deploy_path }}'"
+            "mkdir -p '${PROJECT_DIR}'"
 
       - name: Sync docker-compose.yml to VPS
         run: |
+          PROJECT_NAME="${{ github.event.repository.name }}"
+          PROJECT_DIR="/home/deployer/stacks/projects/${PROJECT_NAME}"
+
           rsync -az \
             --exclude ".git" \
             --exclude ".github" \
             ./docker-compose.yml \
-            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ inputs.deploy_path }}/"
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${PROJECT_DIR}/"
 
       - name: Prepare .env and deploy on VPS
         run: |
+          PROJECT_NAME="${{ github.event.repository.name }}"
+          PROJECT_DIR="/home/deployer/stacks/projects/${PROJECT_NAME}"
+          GITHUB_REPOSITORY="${{ github.repository }}"
+
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << EOF
             set -euo pipefail
 
-            PROJECT_DIR="${{ inputs.deploy_path }}"
-            PROJECT_NAME="$(basename "$PROJECT_DIR")"
-            REPO_NAME="${{ github.event.repository.name }}"
-            GITHUB_REPOSITORY="${{ github.repository }}"
+            PROJECT_DIR="${PROJECT_DIR}"
+            PROJECT_NAME="${PROJECT_NAME}"
+            GITHUB_REPOSITORY="${GITHUB_REPOSITORY}"
 
-            mkdir -p "$PROJECT_DIR"
+            mkdir -p "\$PROJECT_DIR"
 
-            if [ ! -f "$PROJECT_DIR/.env" ]; then
-              cp /home/deployer/env/global.env "$PROJECT_DIR/.env"
+            if [ ! -f "\$PROJECT_DIR/.env" ]; then
+              cp /home/deployer/env/global.env "\$PROJECT_DIR/.env"
             fi
 
-            grep -q '^PROJECT_NAME=' "$PROJECT_DIR/.env" || echo "PROJECT_NAME=$PROJECT_NAME" >> "$PROJECT_DIR/.env"
-            grep -q '^GITHUB_REPOSITORY=' "$PROJECT_DIR/.env" || echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY" >> "$PROJECT_DIR/.env"
-            grep -q '^REPO_NAME=' "$PROJECT_DIR/.env" || echo "REPO_NAME=$REPO_NAME" >> "$PROJECT_DIR/.env"
+            grep -q '^PROJECT_NAME=' "\$PROJECT_DIR/.env" || echo "PROJECT_NAME=\$PROJECT_NAME" >> "\$PROJECT_DIR/.env"
+            grep -q '^GITHUB_REPOSITORY=' "\$PROJECT_DIR/.env" || echo "GITHUB_REPOSITORY=\$GITHUB_REPOSITORY" >> "\$PROJECT_DIR/.env"
+            grep -q '^REPO_NAME=' "\$PROJECT_DIR/.env" || echo "REPO_NAME=\$PROJECT_NAME" >> "\$PROJECT_DIR/.env"
 
-            cd "$PROJECT_DIR"
+            cd "\$PROJECT_DIR"
             docker compose pull
             docker compose up -d --remove-orphans
           EOF
