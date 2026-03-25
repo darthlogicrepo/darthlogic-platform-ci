@@ -54,29 +54,40 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Sync project files to VPS
+      - name: Ensure project directory exists on VPS
         run: |
-          PROJECT_DIR="${{ inputs.deploy_path }}"
-          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "mkdir -p '$PROJECT_DIR'"
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "mkdir -p '${{ inputs.deploy_path }}'"
 
+      - name: Sync docker-compose.yml to VPS
+        run: |
           rsync -az \
             --exclude ".git" \
             --exclude ".github" \
             ./docker-compose.yml \
-            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$PROJECT_DIR/"
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ inputs.deploy_path }}/"
 
-      - name: Prepare env and deploy on VPS
+      - name: Prepare .env and deploy on VPS
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << EOF
             set -euo pipefail
 
             PROJECT_DIR="${{ inputs.deploy_path }}"
+            PROJECT_NAME="$(basename "$PROJECT_DIR")"
+            REPO_NAME="${{ github.event.repository.name }}"
+            GITHUB_REPOSITORY="${{ github.repository }}"
 
-            if [ ! -f "\$PROJECT_DIR/.env" ]; then
-              cp /home/deployer/env/global.env "\$PROJECT_DIR/.env"
+            mkdir -p "$PROJECT_DIR"
+
+            if [ ! -f "$PROJECT_DIR/.env" ]; then
+              cp /home/deployer/env/global.env "$PROJECT_DIR/.env"
             fi
 
-            cd "\$PROJECT_DIR"
+            grep -q '^PROJECT_NAME=' "$PROJECT_DIR/.env" || echo "PROJECT_NAME=$PROJECT_NAME" >> "$PROJECT_DIR/.env"
+            grep -q '^GITHUB_REPOSITORY=' "$PROJECT_DIR/.env" || echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY" >> "$PROJECT_DIR/.env"
+            grep -q '^REPO_NAME=' "$PROJECT_DIR/.env" || echo "REPO_NAME=$REPO_NAME" >> "$PROJECT_DIR/.env"
+
+            cd "$PROJECT_DIR"
             docker compose pull
             docker compose up -d --remove-orphans
           EOF
