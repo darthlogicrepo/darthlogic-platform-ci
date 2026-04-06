@@ -67,7 +67,7 @@ jobs:
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             "mkdir -p '${PROJECT_DIR}'"
 
-      - name: Sync docker-compose.yml to VPS
+      - name: Sync deploy files to VPS
         run: |
           PROJECT_NAME="${{ github.event.repository.name }}"
           PROJECT_DIR="/home/deployer/stacks/projects/${PROJECT_NAME}"
@@ -78,7 +78,14 @@ jobs:
             ./docker-compose.yml \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${PROJECT_DIR}/"
 
-      - name: Prepare .env and deploy on VPS
+          if [ -d "./db" ]; then
+            rsync -az \
+              --delete \
+              ./db/ \
+              "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${PROJECT_DIR}/db/"
+          fi
+
+      - name: Prepare .env, run migrations, deploy on VPS
         run: |
           PROJECT_NAME="${{ github.event.repository.name }}"
           PROJECT_DIR="/home/deployer/stacks/projects/${PROJECT_NAME}"
@@ -102,6 +109,19 @@ jobs:
             grep -q '^REPO_NAME=' "\$PROJECT_DIR/.env" || echo "REPO_NAME=\$PROJECT_NAME" >> "\$PROJECT_DIR/.env"
 
             cd "\$PROJECT_DIR"
+
+            if [ -f ".env" ]; then
+              export DATABASE_URL="\$(grep '^DATABASE_URL=' .env | cut -d '=' -f2- || true)"
+            fi
+
+            if [ -f "db/migrate.sh" ]; then
+              echo "Migration script found, running migrations..."
+              chmod +x db/migrate.sh
+              ./db/migrate.sh
+            else
+              echo "No migration script found, skipping migrations."
+            fi
+
             docker compose pull
             docker compose up -d --remove-orphans
           EOF
